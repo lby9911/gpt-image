@@ -98,7 +98,7 @@ const defaultSettings: Settings = {
   output_dir: "",
 };
 
-const sizePresets = ["1024x1024", "2048x2048", "3072x3072", "4096x4096", "auto", "1024x1536", "1536x1024", "1536x864", "1792x1024", "1024x1792", "512x512", "256x256"];
+const sizePresets = ["1024x1024", "2048x2048", "3072x3072", "4096x4096"];
 const sizePresetLabels: Record<string, string> = {
   "1024x1024": "1K",
   "2048x2048": "2K",
