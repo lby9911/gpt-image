@@ -98,7 +98,13 @@ const defaultSettings: Settings = {
   output_dir: "",
 };
 
-const sizePresets = ["auto", "1024x1024", "1024x1536", "1536x1024", "1536x864", "1792x1024", "1024x1792", "512x512", "256x256"];
+const sizePresets = ["1024x1024", "2048x2048", "3072x3072", "4096x4096", "auto", "1024x1536", "1536x1024", "1536x864", "1792x1024", "1024x1792", "512x512", "256x256"];
+const sizePresetLabels: Record<string, string> = {
+  "1024x1024": "1K",
+  "2048x2048": "2K",
+  "3072x3072": "3K",
+  "4096x4096": "4K",
+};
 const imageModelPresets = ["gpt-image-2", "gpt-image-1", "custom"];
 const responseModelPresets = ["gpt-5.5", "custom"];
 const baseUrlPresets = ["https://api.openai.com/v1", "https://api.openai.com/v1/images/generations", "https://api.openai.com/v1/images/edits", "custom"];
@@ -281,6 +287,7 @@ let images: ImageItem[] = [];
 let selectedImageId = "";
 let busy = false;
 let notice: Notice | null = null;
+let promptDraft = "";
 let generationSteps: GenerationStep[] = [];
 let referenceImages: ReferenceImage[] = [];
 let dragActive = false;
@@ -337,6 +344,10 @@ function splitSize(size: string) {
 
 function selectedSizeChoice(size: string) {
   return sizePresets.includes(size) ? size : "custom";
+}
+
+function formatSizeOption(size: string) {
+  return sizePresetLabels[size] ? `${sizePresetLabels[size]} - ${size}` : size;
 }
 
 function modelPresetsFor(format: RequestFormat) {
@@ -564,7 +575,7 @@ function renderGenerationSettings() {
       <label class="field" for="size_choice">
         <span>${t("size")}</span>
         <select id="size_choice" name="size_choice">
-          ${renderSelectOptions(sizePresets, sizeChoice)}
+          ${renderSelectOptions(sizePresets, sizeChoice, formatSizeOption)}
           <option value="custom" ${sizeChoice === "custom" ? "selected" : ""}>${t("custom")}</option>
         </select>
       </label>
@@ -940,7 +951,12 @@ function render() {
           </div>
         </header>
 
-        ${notice ? `<div class="notice ${notice.type}">${escapeHtml(notice.message)}</div>` : ""}
+        ${notice ? `
+          <div class="notice ${notice.type}" role="status">
+            <span>${escapeHtml(notice.message)}</span>
+            <button class="notice-close" type="button" data-close-notice aria-label="${t("close")}">&times;</button>
+          </div>
+        ` : ""}
         ${renderProgressPanel()}
 
         <section class="conversation">
@@ -951,7 +967,7 @@ function render() {
         <form id="generate-form" class="composer">
           <div class="composer-shell">
             ${renderReferencePanel()}
-            <textarea name="prompt" placeholder="${t("promptPlaceholder")}"></textarea>
+            <textarea name="prompt" placeholder="${t("promptPlaceholder")}">${escapeHtml(promptDraft)}</textarea>
             <div class="composer-bar">
               <span>${modeLabel} - ${escapeHtml(settings.size)} - ${escapeHtml(settings.output_format.toUpperCase())}</span>
               <button id="generate-button" class="primary" type="button" ${busy ? "disabled" : ""}>
@@ -978,6 +994,13 @@ function bindEvents() {
   document.querySelector<HTMLFormElement>("#settings-form")?.addEventListener("submit", (event) => event.preventDefault());
   document.querySelector<HTMLFormElement>("#generate-form")?.addEventListener("submit", generateImage);
   document.querySelector<HTMLButtonElement>("#generate-button")?.addEventListener("click", generateImage);
+  document.querySelector<HTMLTextAreaElement>("#generate-form textarea")?.addEventListener("input", (event) => {
+    promptDraft = (event.currentTarget as HTMLTextAreaElement).value;
+  });
+  document.querySelector<HTMLButtonElement>("[data-close-notice]")?.addEventListener("click", () => {
+    notice = null;
+    render();
+  });
   document.querySelector<HTMLButtonElement>("#refresh")?.addEventListener("click", loadImages);
   document.querySelector<HTMLButtonElement>("#new-prompt")?.addEventListener("click", focusPrompt);
   document.querySelector<HTMLButtonElement>("#choose-output-dir")?.addEventListener("click", chooseOutputDir);
@@ -1381,6 +1404,7 @@ async function generateImage(event: Event) {
   if (!formElement) return;
   const form = new FormData(formElement);
   const prompt = String(form.get("prompt") || "").trim();
+  promptDraft = String(form.get("prompt") || "");
 
   if (settings.config_source !== "codex" && !settings.base_url.trim()) {
     showNotice("error", t("needBase"));
@@ -1409,6 +1433,7 @@ async function generateImage(event: Event) {
     selectedImageId = image.id;
     images = [image, ...images.filter((item) => item.id !== image.id)];
     referenceImages = [];
+    promptDraft = "";
     showNotice("success", `${t("savedAs")}: ${image.file_name}`);
   } catch (error) {
     showNotice("error", errorMessage(error));
