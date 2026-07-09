@@ -234,6 +234,38 @@ fn normalize_size(size: &str) -> String {
     }
 }
 
+fn parse_size_pair(size: &str) -> Option<(u32, u32)> {
+    let (width, height) = size.trim().split_once('x')?;
+    Some((width.trim().parse().ok()?, height.trim().parse().ok()?))
+}
+
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        let next = a % b;
+        a = b;
+        b = next;
+    }
+    a.max(1)
+}
+
+fn aspect_ratio_from_size(size: &str) -> Option<String> {
+    let (width, height) = parse_size_pair(size)?;
+    let divisor = gcd(width, height);
+    Some(format!("{}:{}", width / divisor, height / divisor))
+}
+
+fn xai_resolution_from_size(size: &str) -> Result<String, String> {
+    let (width, height) = parse_size_pair(size).unwrap_or((1024, 1024));
+    let largest = width.max(height);
+    if largest <= 1024 {
+        Ok("1k".to_string())
+    } else if largest <= 2048 {
+        Ok("2k".to_string())
+    } else {
+        Err("xAI Grok Imagine currently supports 1K or 2K only. Select 1K/2K or use OpenAI Images for larger sizes.".to_string())
+    }
+}
+
 fn normalize_quality(quality: &str) -> String {
     let trimmed = quality.trim();
     if trimmed.is_empty() {
@@ -425,10 +457,10 @@ fn emit_status(app: &AppHandle, phase: &str, message: &str) {
 }
 
 fn default_model_for_request_format(request_format: &str) -> String {
-    if request_format == "responses" {
-        "gpt-5.5".to_string()
-    } else {
-        default_model()
+    match request_format {
+        "responses" => "gpt-5.5".to_string(),
+        "xai" => "grok-imagine-image-quality".to_string(),
+        _ => default_model(),
     }
 }
 
@@ -437,10 +469,13 @@ fn normalize_model_for_request_format(model: &str, request_format: &str) -> Stri
     if value.is_empty() {
         return default_model_for_request_format(request_format);
     }
+    if request_format == "xai" && (value == "grok-4.5" || value.starts_with("gpt-")) {
+        return default_model_for_request_format(request_format);
+    }
     if request_format == "responses" && value.starts_with("gpt-image") {
         return "gpt-5.5".to_string();
     }
-    if request_format == "images" && value == "gpt-5.5" {
+    if request_format == "images" && (value == "gpt-5.5" || value == "grok-imagine-image-quality") {
         return default_model();
     }
     value.to_string()
@@ -657,6 +692,52 @@ async fn generate_with_images_api(client: &Client, settings: &Settings, prompt: 
     })
 }
 
+async fn generate_with_xai_images_api(client: &Client, settings: &Settings, prompt: &str) -> Result<GeneratedImage, String> {
+    let endpoint = endpoint_for_request(&settings.base_url, "images")?;
+    let size = normalize_size(&settings.size);
+    let mut body = json!({
+        "model": settings.model.trim(),
+        "prompt": prompt,
+        "n": 1,
+        "response_format": "b64_json",
+        "resolution": xai_resolution_from_size(&size)?
+    });
+
+    if let Some(aspect_ratio) = aspect_ratio_from_size(&size) {
+        body["aspect_ratio"] = json!(aspect_ratio);
+    }
+
+    let text = post_json(client, endpoint, &settings.api_key, body).await?;
+    let parsed: ImageApiResponse =
+        serde_json::from_str(&text).map_err(|error| format!("Invalid xAI image API response: {error}; {text}"))?;
+    let first = parsed
+        .data
+        .into_iter()
+        .next()
+        .ok_or_else(|| "xAI image API returned no image data".to_string())?;
+
+    let bytes = if let Some(b64) = first.b64_json.as_deref() {
+        decode_image_payload(b64)?
+    } else if let Some(url) = first.url.as_deref() {
+        client
+            .get(url)
+            .send()
+            .await
+            .map_err(|error| format!("Cannot download xAI image URL: {error}"))?
+            .bytes()
+            .await
+            .map_err(|error| format!("Cannot read downloaded xAI image: {error}"))?
+            .to_vec()
+    } else {
+        return Err("xAI image API returned neither b64_json nor url".to_string());
+    };
+
+    Ok(GeneratedImage {
+        bytes,
+        revised_prompt: first.revised_prompt,
+    })
+}
+
 async fn generate_with_image_edits_api(
     client: &Client,
     settings: &Settings,
@@ -788,16 +869,18 @@ async fn generate_image(app: AppHandle, prompt: String, reference_images: Option
         endpoint_for_image_edit(&settings.base_url)?
     };
     emit_status(&app, "endpoint", &format!("Using endpoint: {endpoint}"));
-    emit_status(&app, "request", "Sending request to OpenAI...");
+    emit_status(&app, "request", if settings.request_format == "xai" { "Sending request to xAI..." } else { "Sending request to OpenAI..." });
     let generated = if !reference_images.is_empty() {
         emit_status(&app, "upload", &format!("Uploading {} reference image(s)...", reference_images.len()));
         generate_with_image_edits_api(&client, &settings, prompt.trim(), &reference_images).await?
+    } else if settings.request_format == "xai" {
+        generate_with_xai_images_api(&client, &settings, prompt.trim()).await?
     } else if settings.request_format == "responses" {
         generate_with_responses_api(&client, &settings, prompt.trim()).await?
     } else {
         generate_with_images_api(&client, &settings, prompt.trim()).await?
     };
-    emit_status(&app, "response", "OpenAI returned image data.");
+    emit_status(&app, "response", if settings.request_format == "xai" { "xAI returned image data." } else { "OpenAI returned image data." });
 
     let id = Uuid::new_v4().to_string();
     let format = normalize_output_format(&settings.output_format);

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import "./styles.css";
 
 type Language = "zh" | "en";
-type RequestFormat = "images" | "responses";
+type RequestFormat = "images" | "responses" | "xai";
 type ConfigSource = "manual" | "codex";
 
 type Settings = {
@@ -107,7 +107,8 @@ const sizePresetLabels: Record<string, string> = {
 };
 const imageModelPresets = ["gpt-image-2", "gpt-image-1", "custom"];
 const responseModelPresets = ["gpt-5.5", "custom"];
-const baseUrlPresets = ["https://api.openai.com/v1", "https://api.openai.com/v1/images/generations", "https://api.openai.com/v1/images/edits", "custom"];
+const xaiModelPresets = ["grok-imagine-image-quality", "custom"];
+const baseUrlPresets = ["https://api.openai.com/v1", "https://api.x.ai/v1", "https://api.openai.com/v1/images/generations", "https://api.openai.com/v1/images/edits", "custom"];
 const qualityPresets = ["auto", "low", "medium", "high", "standard", "hd"];
 const outputFormats = ["png", "webp", "jpeg"];
 
@@ -351,19 +352,28 @@ function formatSizeOption(size: string) {
 }
 
 function modelPresetsFor(format: RequestFormat) {
+  if (format === "xai") return xaiModelPresets;
   return format === "responses" ? responseModelPresets : imageModelPresets;
 }
 
 function defaultModelForFormat(format: RequestFormat) {
+  if (format === "xai") return "grok-imagine-image-quality";
   return format === "responses" ? "gpt-5.5" : "gpt-image-2";
 }
 
 function normalizeModelForFormat(model: string, format: RequestFormat) {
   const value = model.trim();
   if (!value) return defaultModelForFormat(format);
+  if (format === "xai" && (value === "grok-4.5" || value.startsWith("gpt-"))) return defaultModelForFormat(format);
   if (format === "responses" && value.startsWith("gpt-image")) return "gpt-5.5";
-  if (format === "images" && value === "gpt-5.5") return "gpt-image-2";
+  if (format === "images" && (value === "gpt-5.5" || value === "grok-imagine-image-quality")) return "gpt-image-2";
   return value;
+}
+
+function requestFormatLabel(format?: RequestFormat) {
+  if (format === "responses") return "Responses / 5.5";
+  if (format === "xai") return "xAI Grok Imagine";
+  return "OpenAI Images";
 }
 
 function selectedModelChoice(model: string, format: RequestFormat) {
@@ -559,6 +569,7 @@ function renderGenerationSettings() {
           <select id="request_format" name="request_format">
             <option value="images" ${settings.request_format === "images" ? "selected" : ""}>OpenAI Images</option>
             <option value="responses" ${settings.request_format === "responses" ? "selected" : ""}>Responses / 5.5</option>
+            <option value="xai" ${settings.request_format === "xai" ? "selected" : ""}>xAI Grok Imagine</option>
           </select>
         </label>
         <label class="field" for="model_choice">
@@ -942,7 +953,7 @@ function render() {
             <h1>${t("imageGeneration")}</h1>
             <div class="topbar-meta">
               <span>${modeLabel}</span>
-              <span>${settings.request_format === "responses" ? "Responses / 5.5" : "OpenAI Images"}</span>
+              <span>${requestFormatLabel(settings.request_format)}</span>
               <span>${escapeHtml(settings.model)}</span>
             </div>
           </div>
