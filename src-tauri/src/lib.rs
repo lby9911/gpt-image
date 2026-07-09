@@ -459,7 +459,7 @@ fn emit_status(app: &AppHandle, phase: &str, message: &str) {
 fn default_model_for_request_format(request_format: &str) -> String {
     match request_format {
         "responses" => "gpt-5.5".to_string(),
-        "xai" => "grok-imagine-image-quality".to_string(),
+        "xai" => "grok-image".to_string(),
         _ => default_model(),
     }
 }
@@ -475,7 +475,7 @@ fn normalize_model_for_request_format(model: &str, request_format: &str) -> Stri
     if request_format == "responses" && value.starts_with("gpt-image") {
         return "gpt-5.5".to_string();
     }
-    if request_format == "images" && (value == "gpt-5.5" || value == "grok-imagine-image-quality") {
+    if request_format == "images" && (value == "gpt-5.5" || value == "grok-image" || value == "grok-imagine-image-quality") {
         return default_model();
     }
     value.to_string()

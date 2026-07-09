@@ -107,7 +107,7 @@ const sizePresetLabels: Record<string, string> = {
 };
 const imageModelPresets = ["gpt-image-2", "gpt-image-1", "custom"];
 const responseModelPresets = ["gpt-5.5", "custom"];
-const xaiModelPresets = ["grok-imagine-image-quality", "custom"];
+const xaiModelPresets = ["grok-image", "grok-imagine-image-quality", "custom"];
 const baseUrlPresets = ["https://api.openai.com/v1", "https://api.x.ai/v1", "https://api.openai.com/v1/images/generations", "https://api.openai.com/v1/images/edits", "custom"];
 const qualityPresets = ["auto", "low", "medium", "high", "standard", "hd"];
 const outputFormats = ["png", "webp", "jpeg"];
@@ -357,7 +357,7 @@ function modelPresetsFor(format: RequestFormat) {
 }
 
 function defaultModelForFormat(format: RequestFormat) {
-  if (format === "xai") return "grok-imagine-image-quality";
+  if (format === "xai") return "grok-image";
   return format === "responses" ? "gpt-5.5" : "gpt-image-2";
 }
 
@@ -366,7 +366,7 @@ function normalizeModelForFormat(model: string, format: RequestFormat) {
   if (!value) return defaultModelForFormat(format);
   if (format === "xai" && (value === "grok-4.5" || value.startsWith("gpt-"))) return defaultModelForFormat(format);
   if (format === "responses" && value.startsWith("gpt-image")) return "gpt-5.5";
-  if (format === "images" && (value === "gpt-5.5" || value === "grok-imagine-image-quality")) return "gpt-image-2";
+  if (format === "images" && (value === "gpt-5.5" || value === "grok-image" || value === "grok-imagine-image-quality")) return "gpt-image-2";
   return value;
 }
 
