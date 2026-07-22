@@ -225,6 +225,119 @@ fn decode_image_payload(value: &str) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("Cannot decode image data: {error}"))
 }
 
+fn read_be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_be_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]))
+}
+
+fn read_be_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_be_bytes([
+        *bytes.get(offset)?,
+        *bytes.get(offset + 1)?,
+        *bytes.get(offset + 2)?,
+        *bytes.get(offset + 3)?,
+    ]))
+}
+
+fn read_le_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]))
+}
+
+fn read_le_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_le_bytes([
+        *bytes.get(offset)?,
+        *bytes.get(offset + 1)?,
+        *bytes.get(offset + 2)?,
+        *bytes.get(offset + 3)?,
+    ]))
+}
+
+fn read_le_u24(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some((*bytes.get(offset)? as u32) | ((*bytes.get(offset + 1)? as u32) << 8) | ((*bytes.get(offset + 2)? as u32) << 16))
+}
+
+fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 24 || bytes.get(0..8)? != b"\x89PNG\r\n\x1a\n" || bytes.get(12..16)? != b"IHDR" {
+        return None;
+    }
+    Some((read_be_u32(bytes, 16)?, read_be_u32(bytes, 20)?))
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.get(0..2)? != b"\xff\xd8" {
+        return None;
+    }
+    let mut offset = 2usize;
+    while offset + 9 < bytes.len() {
+        while *bytes.get(offset)? == 0xff {
+            offset += 1;
+        }
+        let marker = *bytes.get(offset)?;
+        offset += 1;
+        if marker == 0xd9 || marker == 0xda {
+            break;
+        }
+        let length = read_be_u16(bytes, offset)? as usize;
+        if length < 2 || offset + length > bytes.len() {
+            return None;
+        }
+        let is_sof = matches!(
+            marker,
+            0xc0 | 0xc1 | 0xc2 | 0xc3 | 0xc5 | 0xc6 | 0xc7 | 0xc9 | 0xca | 0xcb | 0xcd | 0xce | 0xcf
+        );
+        if is_sof && length >= 7 {
+            let height = read_be_u16(bytes, offset + 3)? as u32;
+            let width = read_be_u16(bytes, offset + 5)? as u32;
+            return Some((width, height));
+        }
+        offset += length;
+    }
+    None
+}
+
+fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    if bytes.len() < 30 || bytes.get(0..4)? != b"RIFF" || bytes.get(8..12)? != b"WEBP" {
+        return None;
+    }
+    let chunk = bytes.get(12..16)?;
+    if chunk == b"VP8X" {
+        let width = read_le_u24(bytes, 24)? + 1;
+        let height = read_le_u24(bytes, 27)? + 1;
+        return Some((width, height));
+    }
+    if chunk == b"VP8 " {
+        let frame = 20usize;
+        if bytes.get(frame + 3..frame + 6)? != b"\x9d\x01\x2a" {
+            return None;
+        }
+        let width = (read_le_u16(bytes, frame + 6)? & 0x3fff) as u32;
+        let height = (read_le_u16(bytes, frame + 8)? & 0x3fff) as u32;
+        return Some((width, height));
+    }
+    if chunk == b"VP8L" {
+        let frame = 20usize;
+        if *bytes.get(frame)? != 0x2f {
+            return None;
+        }
+        let bits = read_le_u32(bytes, frame + 1)?;
+        let width = (bits & 0x3fff) + 1;
+        let height = ((bits >> 14) & 0x3fff) + 1;
+        return Some((width, height));
+    }
+    None
+}
+
+fn image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    png_dimensions(bytes)
+        .or_else(|| jpeg_dimensions(bytes))
+        .or_else(|| webp_dimensions(bytes))
+}
+
+fn actual_size_label(bytes: &[u8], fallback: &str) -> String {
+    image_dimensions(bytes)
+        .map(|(width, height)| format!("{width}x{height}"))
+        .unwrap_or_else(|| normalize_size(fallback))
+}
+
 fn normalize_size(size: &str) -> String {
     let trimmed = size.trim();
     if trimmed.is_empty() {
@@ -890,13 +1003,14 @@ async fn generate_image(app: AppHandle, prompt: String, reference_images: Option
     fs::write(&file_path, &generated.bytes)
         .await
         .map_err(|error| format!("Cannot save image file: {error}"))?;
+    let actual_size = actual_size_label(&generated.bytes, &settings.size);
 
     let image = ImageItem {
         id,
         prompt: prompt.trim().to_string(),
         revised_prompt: generated.revised_prompt,
         model: settings.model,
-        size: normalize_size(&settings.size),
+        size: actual_size,
         quality: normalize_quality(&settings.quality),
         output_format: format,
         file_name,

@@ -1201,6 +1201,12 @@ function bindSettingsAutoSave() {
     const preset = form.querySelector<HTMLSelectElement>("#base_preset");
     if (preset) preset.value = "custom";
   });
+  form.querySelectorAll<HTMLInputElement>("#custom_width, #custom_height").forEach((input) => {
+    input.addEventListener("input", () => {
+      const sizeChoice = form.querySelector<HTMLSelectElement>("#size_choice");
+      if (sizeChoice) sizeChoice.value = "custom";
+    });
+  });
   form.addEventListener("input", () => {
     scheduleSettingsSave(false);
   });
